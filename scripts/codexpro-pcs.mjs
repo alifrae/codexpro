@@ -39,7 +39,9 @@ if (!hasFlag("codex-sessions")) forwarded.push("--codex-sessions", "off");
 const env = {
   ...process.env,
   CODEXPRO_PROFILE: "pcs",
-  CODEXPRO_INHERIT_ENV: "0"
+  CODEXPRO_INHERIT_ENV: "0",
+  CODEXPRO_REQUIRE_HTTP_TOKEN: "1",
+  CODEXPRO_ALLOW_NO_HTTP_TOKEN: "0"
 };
 delete env.CODEXPRO_ALLOW_HOME;
 delete env.CODEXPRO_ALLOWED_ROOTS;
