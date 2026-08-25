@@ -58,6 +58,15 @@ function closestExistingParent(absPath: string): string {
   return current;
 }
 
+function matchesAnyGlob(relPath: string, globs: readonly string[]): boolean {
+  const rel = normalizeRelPath(relPath).replace(/^\.\//, "");
+  if (!rel || rel === ".") return false;
+  return globs.some((glob) =>
+    minimatch(rel, glob, { dot: true, nocase: false, matchBase: false }) ||
+    minimatch(path.basename(rel), glob, { dot: true, nocase: false, matchBase: true })
+  );
+}
+
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, Workspace>();
   private selectedWorkspaceId?: string;
@@ -138,17 +147,25 @@ export class PathGuard {
   constructor(private readonly config: CodexProConfig) {}
 
   isBlockedRelativePath(relPath: string): boolean {
-    const rel = normalizeRelPath(relPath).replace(/^\.\//, "");
-    if (!rel || rel === ".") return false;
-    return this.config.blockedGlobs.some((glob) =>
-      minimatch(rel, glob, { dot: true, nocase: false, matchBase: false }) ||
-      minimatch(path.basename(rel), glob, { dot: true, nocase: false, matchBase: true })
-    );
+    return matchesAnyGlob(relPath, this.config.blockedGlobs);
+  }
+
+  isWriteBlockedRelativePath(relPath: string): boolean {
+    return matchesAnyGlob(relPath, this.config.writeBlockedGlobs);
   }
 
   assertNotBlocked(relPath: string): void {
     if (this.isBlockedRelativePath(relPath)) {
       throw new CodexProError(`Path is blocked by safety rules: ${relPath}`);
+    }
+  }
+
+  assertNotWriteBlocked(relPath: string): void {
+    if (this.isWriteBlockedRelativePath(relPath)) {
+      throw new CodexProError(
+        `Path is readable but write-protected by the active profile: ${relPath}. ` +
+          "For PCS governance changes, restart with CODEXPRO_PCS_ALLOW_CONTROL_FILE_WRITES=1 only when the user explicitly intends to edit control files."
+      );
     }
   }
 
@@ -177,6 +194,7 @@ export class PathGuard {
     }
 
     this.assertNotBlocked(relPath);
+    if (options.forWrite) this.assertNotWriteBlocked(relPath);
 
     if (realTarget) {
       if (!isSubpath(realTarget, workspace.root)) {
@@ -184,6 +202,7 @@ export class PathGuard {
       }
       const realRel = displayPath(realTarget, workspace.root);
       this.assertNotBlocked(realRel);
+      if (options.forWrite) this.assertNotWriteBlocked(realRel);
     }
 
     if (options.forWrite) {
@@ -202,6 +221,7 @@ export class PathGuard {
       if (realParent) {
         const realParentRel = displayPath(realParent, workspace.root);
         this.assertNotBlocked(realParentRel);
+        this.assertNotWriteBlocked(realParentRel);
       }
     }
 
