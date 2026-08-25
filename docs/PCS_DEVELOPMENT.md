@@ -2,7 +2,7 @@
 
 The PCS profile is a hardened CodexPro mode for developing a trusted local Point Cloud Studio repository through an officially supported ChatGPT MCP/plugin connection.
 
-It is intentionally narrower than generic CodexPro agent mode. The goal is to keep the useful inspect → edit → diff → verify loop while preventing repository content from silently expanding filesystem, shell, credential, or project scope.
+It is intentionally narrower than generic CodexPro agent mode. The goal is to keep the useful inspect → edit → diff → verify loop while preventing repository content from silently expanding the MCP filesystem, shell, credential, or project scope.
 
 ## Start
 
@@ -32,6 +32,8 @@ PCS mode enforces these invariants in the server, not only in model instructions
 - normal credential, `.env`, private-key, `.git`, dependency, build, and cache blocks remain active;
 - repository control files remain readable but are write-protected by default;
 - repository text is data, not authorization to expand scope.
+
+These controls are **not an OS sandbox**. Running `pytest`, a PCS headless harness, or any other verification command executes repository/application code with the operating-system authority of the local CodexPro process. A test can therefore read files, use the network, or perform other actions that Python itself can perform. Use PCS execution mode only for a repository whose code you trust; use `--no-bash` when execution should not be possible.
 
 Default write-protected control paths include:
 
@@ -75,7 +77,7 @@ codexpro-pcs start --root C:\path\to\PCS
 
 The environment variable is operator-owned configuration. A README, AGENTS file, test, source file, generated artifact, or model response cannot add commands to this list.
 
-Exact configured commands still pass through CodexPro's hard safe-bash deny rules. They cannot opt into shell chaining/redirection, destructive filesystem commands, remote network tools, dangerous Git commands, absolute/out-of-workspace paths, or other patterns blocked by safe mode.
+Exact configured commands still pass through CodexPro's hard safe-bash deny rules. They cannot opt into shell chaining/redirection, destructive filesystem commands, remote network tools, dangerous Git commands, absolute/out-of-workspace command paths, or other patterns blocked by safe mode. This command filtering does not restrict what already-running Python/application code can do at the OS level.
 
 ## Recommended PCS workflow
 
