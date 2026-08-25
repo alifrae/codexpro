@@ -117,7 +117,9 @@ This fork includes an opt-in hardened profile for Point Cloud Studio development
 codexpro-pcs start --root C:\path\to\PCS
 ```
 
-It keeps one repository root, blocks `bash full` and inherited secrets, disables Codex session-history access, makes agent/CI control files read-only by default, and limits execution to targeted Python checks plus exact operator-owned PCS verification commands. See [PCS development profile](docs/PCS_DEVELOPMENT.md).
+It keeps one repository root, requires HTTP token authentication, blocks `bash full` and inherited secrets, disables Codex session-history access, makes agent/CI control files read-only by default, and limits execution to targeted Python checks plus exact operator-owned PCS verification commands.
+
+For normal use, start with the [step-by-step PCS tutorial](docs/PCS_TUTORIAL.md). The concise profile contract is in [PCS development profile](docs/PCS_DEVELOPMENT.md), and the security review is recorded in [PCS security audit](docs/PCS_SECURITY_AUDIT.md).
 
 Opt-in tool cards:
 
@@ -188,7 +190,9 @@ npm run release:publish
 - [Website](https://rebel0789.github.io/codexpro/)
 - [FAQ](FAQ.md)
 - [Security](SECURITY.md)
+- [PCS tutorial](docs/PCS_TUTORIAL.md)
 - [PCS development profile](docs/PCS_DEVELOPMENT.md)
+- [PCS security audit](docs/PCS_SECURITY_AUDIT.md)
 - [Stable URL guide](DOMAIN_SETUP.md)
 - [Changelog](CHANGELOG.md)
 - [Contributors](CONTRIBUTORS.md)
