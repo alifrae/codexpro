@@ -27,7 +27,8 @@ const SAFE_ALLOWED_PREFIXES = [
   "git diff",
   "git log",
   "git show",
-  "git branch",
+  "git branch --list",
+  "git branch --show-current",
   "git rev-parse",
   "git ls-files",
   "npm test",
@@ -67,6 +68,19 @@ const SAFE_ALLOWED_PREFIXES = [
   "npx eslint",
   "biome check",
   "npx biome check"
+];
+
+const PCS_SAFE_ALLOWED_PREFIXES = [
+  "pytest",
+  "python -m pytest",
+  "python3 -m pytest",
+  "uv run pytest",
+  "ruff check",
+  "python -m ruff check",
+  "python3 -m ruff check",
+  "mypy",
+  "python -m mypy",
+  "python3 -m mypy"
 ];
 
 const SAFE_BLOCKED_PATTERNS = [
@@ -118,9 +132,16 @@ function compact(command: string): string {
   return command.trim().replace(/\s+/g, " ");
 }
 
-function startsWithAllowedPrefix(command: string): boolean {
+function hasAllowedPrefix(command: string, prefixes: readonly string[]): boolean {
+  return prefixes.some((prefix) => command === prefix || command.startsWith(`${prefix} `));
+}
+
+function startsWithAllowedPrefix(config: CodexProConfig, command: string): boolean {
   const normalized = compact(command);
-  return isAllowedPackageScript(normalized) || SAFE_ALLOWED_PREFIXES.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix} `));
+  if (config.profile === "pcs") {
+    return config.pcsAllowedCommands.includes(normalized) || hasAllowedPrefix(normalized, PCS_SAFE_ALLOWED_PREFIXES);
+  }
+  return isAllowedPackageScript(normalized) || hasAllowedPrefix(normalized, SAFE_ALLOWED_PREFIXES);
 }
 
 function isAllowedPackageScript(command: string): boolean {
@@ -131,7 +152,7 @@ function isAllowedPackageScript(command: string): boolean {
 
 function assertSafeCommand(config: CodexProConfig, command: string): void {
   if (config.bashMode === "off") {
-    throw new CodexProError("bash tool is disabled. Start with CODEXPRO_BASH_MODE=safe or CODEXPRO_BASH_MODE=full to enable it.");
+    throw new CodexProError("bash tool is disabled. Start with CODEXPRO_BASH_MODE=safe to enable bounded checks.");
   }
   if (config.bashMode === "full") return;
 
@@ -141,15 +162,20 @@ function assertSafeCommand(config: CodexProConfig, command: string): void {
     if (pattern.test(raw) || pattern.test(normalized)) {
       throw new CodexProError(
         `Command is blocked in CODEXPRO_BASH_MODE=safe: ${normalized}\n` +
-          "Use separate read/search/git tools, or restart with CODEXPRO_BASH_MODE=full only for trusted repos."
+          (config.profile === "pcs"
+            ? "PCS mode keeps generic shell authority disabled. Use read/search/git tools or an operator-owned exact command in CODEXPRO_PCS_ALLOWED_COMMANDS."
+            : "Use separate read/search/git tools, or restart with CODEXPRO_BASH_MODE=full only for trusted repos.")
       );
     }
   }
-  if (!startsWithAllowedPrefix(normalized)) {
+  if (!startsWithAllowedPrefix(config, normalized)) {
     throw new CodexProError(
-      `Command is not in the safe bash allowlist: ${normalized}\n` +
-        "Allowed examples: ls, find, git status, git diff, npm test, npm run typecheck, npm run build:clients, pytest, go test, cargo test. Use read/search tools for file contents. " +
-        "Use CODEXPRO_BASH_MODE=full for trusted local automation."
+      config.profile === "pcs"
+        ? `Command is not permitted by the PCS execution policy: ${normalized}\n` +
+          "Built-in PCS checks are pytest, ruff check, and mypy. Add project-specific headless/smoke commands as exact strings in CODEXPRO_PCS_ALLOWED_COMMANDS."
+        : `Command is not in the safe bash allowlist: ${normalized}\n` +
+          "Allowed examples: ls, find, git status, git diff, npm test, npm run typecheck, pytest, go test, cargo test. Use read/search tools for file contents. " +
+          "Use CODEXPRO_BASH_MODE=full for trusted local automation."
     );
   }
 }
