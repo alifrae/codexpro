@@ -109,6 +109,16 @@ codexpro start --mode pro
 codexpro start --headless
 ```
 
+### PCS development profile
+
+This fork includes an opt-in hardened profile for Point Cloud Studio development:
+
+```powershell
+codexpro-pcs start --root C:\path\to\PCS
+```
+
+It keeps one repository root, blocks `bash full` and inherited secrets, disables Codex session-history access, makes agent/CI control files read-only by default, and limits execution to targeted Python checks plus exact operator-owned PCS verification commands. See [PCS development profile](docs/PCS_DEVELOPMENT.md).
+
 Opt-in tool cards:
 
 ```bash
@@ -178,6 +188,7 @@ npm run release:publish
 - [Website](https://rebel0789.github.io/codexpro/)
 - [FAQ](FAQ.md)
 - [Security](SECURITY.md)
+- [PCS development profile](docs/PCS_DEVELOPMENT.md)
 - [Stable URL guide](DOMAIN_SETUP.md)
 - [Changelog](CHANGELOG.md)
 - [Contributors](CONTRIBUTORS.md)
