@@ -8,9 +8,11 @@ export type BashTranscriptMode = "compact" | "full";
 export type CodexSessionsMode = "off" | "metadata" | "read";
 export type WriteMode = "off" | "handoff" | "workspace";
 export type ToolMode = "minimal" | "standard" | "full";
+export type CodexProProfile = "default" | "pcs";
 export const MIN_HTTP_TOKEN_BYTES = 24;
 
 export interface CodexProConfig {
+  profile: CodexProProfile;
   defaultRoot: string;
   allowedRoots: string[];
   host: string;
@@ -36,6 +38,8 @@ export interface CodexProConfig {
   maxHttpSessions: number;
   httpSessionTtlMs: number;
   blockedGlobs: string[];
+  writeBlockedGlobs: string[];
+  pcsAllowedCommands: string[];
   contextDir: string;
   toolCards: boolean;
   connectionTest: boolean;
@@ -80,6 +84,24 @@ const DEFAULT_BLOCKED_GLOBS = [
   ".cache",
   ".cache/**",
   "**/.cache/**"
+];
+
+const PCS_WRITE_BLOCKED_GLOBS = [
+  ".github/workflows",
+  ".github/workflows/**",
+  "**/.github/workflows/**",
+  "AGENTS.md",
+  "**/AGENTS.md",
+  "CLAUDE.md",
+  "**/CLAUDE.md",
+  "GEMINI.md",
+  "**/GEMINI.md",
+  ".codex",
+  ".codex/**",
+  "**/.codex/**",
+  ".agents",
+  ".agents/**",
+  "**/.agents/**"
 ];
 
 function parseArgs(argv: string[]): Record<string, string | string[] | boolean> {
@@ -189,6 +211,26 @@ function toolModeFrom(value: string | undefined): ToolMode {
   return "standard";
 }
 
+function profileFrom(value: string | undefined): CodexProProfile {
+  if (!value || value === "default") return "default";
+  if (value === "pcs") return "pcs";
+  throw new Error(`Unknown CodexPro profile: ${value}. Supported profiles: default, pcs.`);
+}
+
+function jsonStringArrayFrom(value: string | undefined, name: string): string[] {
+  if (!value?.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`${name} must be a JSON array of strings: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string" || !item.trim())) {
+    throw new Error(`${name} must be a JSON array of non-empty strings.`);
+  }
+  return [...new Set(parsed.map((item) => item.trim().replace(/\s+/g, " ")))];
+}
+
 function widgetDomainFrom(value: string | undefined): string {
   const raw = value?.trim() || "https://rebel0789.github.io";
   let parsed: URL;
@@ -243,6 +285,8 @@ function isLoopbackHost(host: string): boolean {
 
 export function loadConfig(argv = process.argv.slice(2)): CodexProConfig {
   const args = parseArgs(argv);
+  const profileArg = typeof args.profile === "string" ? args.profile : undefined;
+  const profile = profileFrom(profileArg ?? process.env.CODEXPRO_PROFILE);
 
   const rootFromArgs = typeof args.root === "string" ? args.root : undefined;
   const root = rootFromArgs ?? process.env.CODEXPRO_ROOT ?? process.env.CODEBASE_BRIDGE_REPO_ROOT ?? process.cwd();
@@ -259,6 +303,9 @@ export function loadConfig(argv = process.argv.slice(2)): CodexProConfig {
   ];
 
   const allowHome = process.env.CODEXPRO_ALLOW_HOME === "1" || args["allow-home"] === true;
+  if (profile === "pcs" && (allowHome || allowRootArgs.length > 0 || envAllowedRoots.length > 0)) {
+    throw new Error("The PCS profile requires exactly one explicit repository root. Remove --allow-root, CODEXPRO_ALLOWED_ROOTS, and --allow-home.");
+  }
   const requestedAllowed = [defaultRoot, ...allowRootArgs, ...envAllowedRoots, ...(allowHome ? [os.homedir()] : [])];
   const allowedRoots = [...new Set(requestedAllowed.map(toRealDir))];
 
@@ -305,7 +352,26 @@ export function loadConfig(argv = process.argv.slice(2)): CodexProConfig {
     throw new Error("CODEXPRO_REQUIRE_BASH_SESSION requires CODEXPRO_BASH_SESSION_ID or --bash-session.");
   }
 
+  const bashMode = bashModeFrom(bashArg ?? process.env.CODEXPRO_BASH_MODE);
+  if (profile === "pcs" && bashMode === "full") {
+    throw new Error("The PCS profile does not permit CODEXPRO_BASH_MODE=full. Use safe/off plus operator-owned CODEXPRO_PCS_ALLOWED_COMMANDS.");
+  }
+  const codexSessions = codexSessionsFrom(codexSessionsArg ?? process.env.CODEXPRO_CODEX_SESSIONS);
+  if (profile === "pcs" && codexSessions !== "off") {
+    throw new Error("The PCS profile keeps Codex session history access off. Run a separate non-PCS profile if session history is required.");
+  }
+  const inheritEnv = process.env.CODEXPRO_INHERIT_ENV === "1";
+  if (profile === "pcs" && inheritEnv) {
+    throw new Error("The PCS profile does not permit CODEXPRO_INHERIT_ENV=1 because repository code must not inherit bridge/API secrets.");
+  }
+  const allowControlFileWrites = boolFrom(process.env.CODEXPRO_PCS_ALLOW_CONTROL_FILE_WRITES, false);
+  const writeBlockedGlobs = profile === "pcs" && !allowControlFileWrites ? PCS_WRITE_BLOCKED_GLOBS : [];
+  const pcsAllowedCommands = profile === "pcs"
+    ? jsonStringArrayFrom(process.env.CODEXPRO_PCS_ALLOWED_COMMANDS, "CODEXPRO_PCS_ALLOWED_COMMANDS")
+    : [];
+
   return {
+    profile,
     defaultRoot,
     allowedRoots,
     host,
@@ -313,15 +379,17 @@ export function loadConfig(argv = process.argv.slice(2)): CodexProConfig {
     widgetDomain: widgetDomainFrom(widgetDomainArg ?? process.env.CODEXPRO_WIDGET_DOMAIN),
     authToken,
     requireHttpToken,
-    bashMode: bashModeFrom(bashArg ?? process.env.CODEXPRO_BASH_MODE),
+    bashMode,
     bashTranscript: bashTranscriptFrom(bashTranscriptArg ?? process.env.CODEXPRO_BASH_TRANSCRIPT),
     bashSessionId,
     requireBashSession,
-    codexSessions: codexSessionsFrom(codexSessionsArg ?? process.env.CODEXPRO_CODEX_SESSIONS),
+    codexSessions,
     codexDir: expandHome(codexDirArg || process.env.CODEXPRO_CODEX_DIR || path.join(os.homedir(), ".codex")),
     writeMode: writeModeFrom(writeArg ?? process.env.CODEXPRO_WRITE_MODE),
-    toolMode: toolModeFrom(toolModeArg ?? process.env.CODEXPRO_TOOL_MODE),
-    inheritEnv: process.env.CODEXPRO_INHERIT_ENV === "1",
+    toolMode: toolModeArg || process.env.CODEXPRO_TOOL_MODE
+      ? toolModeFrom(toolModeArg ?? process.env.CODEXPRO_TOOL_MODE)
+      : profile === "pcs" ? "full" : "standard",
+    inheritEnv,
     maxReadBytes: numberFrom(process.env.CODEXPRO_MAX_READ_BYTES, 180_000, 4_000, 2_000_000),
     maxWriteBytes: numberFrom(process.env.CODEXPRO_MAX_WRITE_BYTES, 1_000_000, 1_000, 10_000_000),
     maxOutputBytes: numberFrom(process.env.CODEXPRO_MAX_OUTPUT_BYTES, 120_000, 4_000, 2_000_000),
@@ -332,6 +400,8 @@ export function loadConfig(argv = process.argv.slice(2)): CodexProConfig {
     maxHttpSessions: numberFrom(process.env.CODEXPRO_MAX_HTTP_SESSIONS, 64, 1, 512),
     httpSessionTtlMs: numberFrom(process.env.CODEXPRO_HTTP_SESSION_TTL_MS, 30 * 60_000, 60_000, 24 * 60 * 60_000),
     blockedGlobs: [...DEFAULT_BLOCKED_GLOBS, ...extraBlockedGlobs],
+    writeBlockedGlobs,
+    pcsAllowedCommands,
     contextDir: contextDirFrom(process.env.CODEXPRO_CONTEXT_DIR),
     toolCards: boolFrom(toolCardsArg ?? process.env.CODEXPRO_TOOL_CARDS, false),
     connectionTest: boolFrom(process.env.CODEXPRO_CONNECTION_TEST, false),
