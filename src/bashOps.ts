@@ -70,6 +70,8 @@ const SAFE_ALLOWED_PREFIXES = [
   "npx biome check"
 ];
 
+const SAFE_EXACT_COMMANDS = new Set(["git branch"]);
+
 const PCS_SAFE_ALLOWED_PREFIXES = [
   "pwd",
   "pytest",
@@ -144,7 +146,7 @@ function startsWithAllowedPrefix(config: CodexProConfig, command: string): boole
   if (config.profile === "pcs") {
     return config.pcsAllowedCommands.includes(normalized) || hasAllowedPrefix(normalized, PCS_SAFE_ALLOWED_PREFIXES);
   }
-  return isAllowedPackageScript(normalized) || hasAllowedPrefix(normalized, SAFE_ALLOWED_PREFIXES);
+  return SAFE_EXACT_COMMANDS.has(normalized) || isAllowedPackageScript(normalized) || hasAllowedPrefix(normalized, SAFE_ALLOWED_PREFIXES);
 }
 
 function isAllowedPackageScript(command: string): boolean {
@@ -155,7 +157,11 @@ function isAllowedPackageScript(command: string): boolean {
 
 function assertSafeCommand(config: CodexProConfig, command: string): void {
   if (config.bashMode === "off") {
-    throw new CodexProError("bash tool is disabled. Start with CODEXPRO_BASH_MODE=safe to enable bounded checks.");
+    throw new CodexProError(
+      config.profile === "pcs"
+        ? "bash tool is disabled. Start with CODEXPRO_BASH_MODE=safe to enable bounded checks."
+        : "bash tool is disabled. Start with CODEXPRO_BASH_MODE=safe or CODEXPRO_BASH_MODE=full to enable it."
+    );
   }
   if (config.bashMode === "full") return;
 
@@ -177,7 +183,7 @@ function assertSafeCommand(config: CodexProConfig, command: string): void {
         ? `Command is not permitted by the PCS execution policy: ${normalized}\n` +
           "Built-in PCS checks are pytest, ruff check, and mypy. Add project-specific headless/smoke commands as exact strings in CODEXPRO_PCS_ALLOWED_COMMANDS."
         : `Command is not in the safe bash allowlist: ${normalized}\n` +
-          "Allowed examples: ls, find, git status, git diff, npm test, npm run typecheck, pytest, go test, cargo test. Use read/search tools for file contents. " +
+          "Allowed examples: ls, find, git status, git diff, npm test, npm run typecheck, npm run build:clients, pytest, go test, cargo test. Use read/search tools for file contents. " +
           "Use CODEXPRO_BASH_MODE=full for trusted local automation."
     );
   }
@@ -278,6 +284,9 @@ function trimOutput(value: string, maxBytes: number): { value: string; truncated
 function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (!child.pid) return;
   if (process.platform === "win32") {
+    // Windows does not provide Unix-style cooperative signals to process trees.
+    // Force the full tree while the parent PID still identifies its descendants;
+    // otherwise the shell can exit first and orphan an output-heavy grandchild.
     const args = ["/pid", String(child.pid), "/t", "/f"];
     const result = spawnSync("taskkill", args, { stdio: "ignore", windowsHide: true });
     if (result.status !== 0) child.kill(signal);
