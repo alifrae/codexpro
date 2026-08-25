@@ -71,6 +71,7 @@ const SAFE_ALLOWED_PREFIXES = [
 ];
 
 const PCS_SAFE_ALLOWED_PREFIXES = [
+  "pwd",
   "pytest",
   "python -m pytest",
   "python3 -m pytest",
@@ -109,10 +110,12 @@ const SAFE_BLOCKED_PATTERNS = [
   /(^|\s)(npm|pnpm|yarn)\s+publish\b/,
   /(^|\s)--no-index\b/,
   /(^|\s)--fix\b/,
-  /(^|\s)(\/|~(?:\/|\s|$))/,
-  /(^|\s)\.\.(?:\/|\s|$)/,
+  /(^|\s)(\/|~(?:[\\/]|\s|$))/,
+  /(^|\s)\.\.(?:[\\/]|\s|$)/,
+  /(^|\s)[A-Za-z]:[\\/]/,
+  /(^|\s)\\\\/,
   /\$/,
-  /(^|[\s:])(?:\.env(?:[./\s:]|$)|\.git(?:[\/\s:]|$)|node_modules(?:[\/\s:]|$)|\.ssh(?:[\/\s:]|$)|id_rsa(?:[.\s:]|$)|id_ed25519(?:[.\s:]|$)|[^\s:]*\.(?:pem|key)(?:[\s:]|$))/,
+  /(^|[\s:])(?:\.env(?:[./\\\s:]|$)|\.git(?:[\\/\s:]|$)|node_modules(?:[\\/\s:]|$)|\.ssh(?:[\\/\s:]|$)|id_rsa(?:[.\s:]|$)|id_ed25519(?:[.\s:]|$)|[^\s:]*\.(?:pem|key)(?:[\s:]|$))/,
   /(^|\s)['"]?-exec(?:['"]|\s|$)/,
   /(^|\s)['"]?-execdir(?:['"]|\s|$)/,
   /(^|\s)['"]?-delete(?:['"]|\s|$)/,
@@ -275,9 +278,6 @@ function trimOutput(value: string, maxBytes: number): { value: string; truncated
 function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (!child.pid) return;
   if (process.platform === "win32") {
-    // Windows does not provide Unix-style cooperative signals to process trees.
-    // Force the full tree while the parent PID still identifies its descendants;
-    // otherwise the shell can exit first and orphan an output-heavy grandchild.
     const args = ["/pid", String(child.pid), "/t", "/f"];
     const result = spawnSync("taskkill", args, { stdio: "ignore", windowsHide: true });
     if (result.status !== 0) child.kill(signal);
