@@ -64,6 +64,7 @@
   },
   "bin": {
     "codexpro": "scripts/codexpro.mjs",
+    "codexpro-pcs": "scripts/codexpro-pcs.mjs",
     "codexpro-mcp": "dist/stdio.js",
     "codexpro-mcp-http": "dist/http.js"
   },
