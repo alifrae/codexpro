@@ -46,6 +46,8 @@ try {
   );
   assert.equal(guard.resolve(workspace, "module.py", { forWrite: true }).relPath, "module.py");
 
+  const pwd = await runBash(config, guard, workspace, "pwd");
+  assert.equal(pwd.exitCode, 0);
   await assert.rejects(
     () => runBash(config, guard, workspace, "git branch -D unsafe"),
     /not permitted by the PCS execution policy|blocked in CODEXPRO_BASH_MODE=safe/
@@ -54,11 +56,29 @@ try {
     () => runBash(config, guard, workspace, "npm run build"),
     /not permitted by the PCS execution policy/
   );
+  await assert.rejects(
+    () => runBash(config, guard, workspace, String.raw`python -m pytest ..\outside\test.py`),
+    /blocked in CODEXPRO_BASH_MODE=safe/
+  );
+  await assert.rejects(
+    () => runBash(config, guard, workspace, String.raw`python -m pytest C:\outside\test.py`),
+    /blocked in CODEXPRO_BASH_MODE=safe/
+  );
 
   assert.throws(
     () => loadConfig(["--root", root, "--allow-root", otherRoot, "--profile", "pcs"]),
-    /requires exactly one explicit repository root/
+    /requires exactly one repository root/
   );
+
+  process.env.CODEXPRO_ALLOWED_ROOTS = root;
+  const launcherCompatible = loadConfig(["--root", root, "--profile", "pcs"]);
+  assert.deepEqual(launcherCompatible.allowedRoots, [root]);
+  process.env.CODEXPRO_ALLOWED_ROOTS = otherRoot;
+  assert.throws(
+    () => loadConfig(["--root", root, "--profile", "pcs"]),
+    /requires exactly one repository root/
+  );
+  delete process.env.CODEXPRO_ALLOWED_ROOTS;
 
   process.env.CODEXPRO_BASH_MODE = "full";
   assert.throws(
