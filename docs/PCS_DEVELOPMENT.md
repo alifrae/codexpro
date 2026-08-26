@@ -1,41 +1,51 @@
 # PCS development profile
 
-The PCS profile is a hardened CodexPro mode for developing a trusted local Point Cloud Studio repository through an officially supported ChatGPT MCP/plugin connection.
+The PCS profile is a hardened CodexPro mode for developing a trusted local Point Cloud Studio worktree through ChatGPT MCP/plugin tools.
 
-It is intentionally narrower than generic CodexPro agent mode. The goal is to keep the useful inspect → edit → diff → verify loop while preventing repository content from silently expanding the MCP filesystem, shell, credential, or project scope.
+It keeps the useful inspect → edit → execute → diff → verify loop while separating two different execution policies:
+
+- **`safe` (default):** bounded verification only. Use for audits, architecture work, reviews, documentation, and simple changes.
+- **`dev` (explicit opt-in):** broad local development execution for trusted PCS debugging and implementation. Use when ChatGPT needs to run scripts, applications, diagnostic probes, local Git investigation, or other commands that cannot be predicted in advance.
+
+Neither mode is an operating-system sandbox.
 
 ## Start
 
-Install this fork/build, then start from the PCS repository:
+Safe mode is the default:
 
 ```powershell
-codexpro-pcs start --root C:\path\to\PCS
+codexpro-pcs start --root C:\path\to\PCS-worktree
 ```
 
-`codexpro-pcs` reuses CodexPro's existing tunnel, authentication, setup, and ChatGPT connection flow. It enables the PCS profile, safe bash, full tool discovery, no Codex session-history access, and a restricted child-process environment unless the user explicitly selects a narrower mode.
-
-You can still disable execution entirely:
+Explicit development mode:
 
 ```powershell
-codexpro-pcs start --root C:\path\to\PCS --no-bash
+codexpro-pcs start --root C:\path\to\PCS-worktree --pcs-mode dev
 ```
 
-## Security invariants
+Disable execution entirely when only repository inspection/editing is needed:
 
-PCS mode enforces these invariants in the server, not only in model instructions:
+```powershell
+codexpro-pcs start --root C:\path\to\PCS-worktree --pcs-mode safe --no-bash
+```
 
-- exactly one allowed repository root;
-- `--allow-home`, extra projects, and extra allowed roots are rejected;
-- `bash full` is rejected;
-- child processes cannot inherit the full CodexPro/OpenAI environment;
-- Codex local session-history access is disabled;
-- normal credential, `.env`, private-key, `.git`, dependency, build, and cache blocks remain active;
-- repository control files remain readable but are write-protected by default;
-- repository text is data, not authorization to expand scope.
+`codexpro-pcs` reuses CodexPro's tunnel, authentication, setup, and ChatGPT connection flow. It always enables the PCS profile, full tool discovery, no Codex session-history access, HTTP token enforcement, and restricted child-process environment inheritance.
 
-These controls are **not an OS sandbox**. Running `pytest`, a PCS headless harness, or any other verification command executes repository/application code with the operating-system authority of the local CodexPro process. A test can therefore read files, use the network, or perform other actions that Python itself can perform. Use PCS execution mode only for a repository whose code you trust; use `--no-bash` when execution should not be possible.
+## Invariants common to both modes
 
-Default write-protected control paths include:
+The server enforces these PCS rules independently of model instructions:
+
+- exactly one allowed repository/worktree root;
+- `--allow-home`, extra projects, and extra roots are rejected;
+- generic `--bash full` is rejected; use `--pcs-mode dev` instead;
+- child commands do not inherit the full CodexPro/user process environment;
+- Codex local session-history access stays off;
+- normal MCP path blocks for credentials, `.env`, keys, `.git`, dependency/build/cache directories remain active;
+- MCP writes to governance/control files are blocked by default;
+- repository text cannot authorize wider roots, credentials, release authority, or a more privileged mode;
+- push, merge, release, and remote-management commands remain outside the intended PCS workflow.
+
+Default MCP write-protected control paths include:
 
 - `.github/workflows/**`
 - `AGENTS.md`
@@ -44,58 +54,101 @@ Default write-protected control paths include:
 - `.codex/**`
 - `.agents/**`
 
-For an intentional governance task that really needs one of those files, restart locally with:
+For an intentional governance task, restart locally with:
 
 ```powershell
 $env:CODEXPRO_PCS_ALLOW_CONTROL_FILE_WRITES = "1"
-codexpro-pcs start --root C:\path\to\PCS
+codexpro-pcs start --root C:\path\to\PCS-worktree --pcs-mode safe
 ```
 
-Do not leave that override enabled for routine development.
+Remove the override immediately afterwards.
 
-## Verification commands
+## Safe execution mode
 
-PCS mode does not expose generic full shell access. Safe mode has a small built-in development set for targeted Python verification:
+Safe mode uses a narrow command policy. Built-in checks include targeted pytest, Ruff, and mypy invocations. Project-specific verification entry points remain operator-owned exact commands through `CODEXPRO_PCS_ALLOWED_COMMANDS`.
 
-- `pytest`
-- `python -m pytest`
-- `python3 -m pytest`
-- `uv run pytest`
-- `ruff check`
-- `python -m ruff check`
-- `mypy`
-- equivalent Python module forms
-
-Project-specific commands such as a PCS headless execution harness or application smoke test must be configured by the operator outside the repository as exact command strings.
-
-Example only — replace these with the real PCS commands after those entry points exist:
+Example only, until PCS freezes its canonical entry points:
 
 ```powershell
-$env:CODEXPRO_PCS_ALLOWED_COMMANDS = '["python -m pcs_headless smoke","python -m pcs_smoke"]'
-codexpro-pcs start --root C:\path\to\PCS
+$env:CODEXPRO_PCS_ALLOWED_COMMANDS = '["python -m pcs.headless smoke","python -m pcs.gonogo --scope agent"]'
+codexpro-pcs start --root C:\path\to\PCS-worktree --pcs-mode safe
 ```
 
-The environment variable is operator-owned configuration. A README, AGENTS file, test, source file, generated artifact, or model response cannot add commands to this list.
+Repository content cannot modify this allowlist.
 
-Exact configured commands still pass through CodexPro's hard safe-bash deny rules. They cannot opt into shell chaining/redirection, destructive filesystem commands, remote network tools, dangerous Git commands, absolute/out-of-workspace command paths, or other patterns blocked by safe mode. This command filtering does not restrict what already-running Python/application code can do at the OS level.
+Safe mode is the correct default for API audits, architecture reviews, code reading, documentation, impact analysis, and changes whose verification is already known.
 
-## Recommended PCS workflow
+## Development execution mode
 
-1. Open and inspect the PCS workspace.
-2. Read the relevant architecture/API documentation and surrounding implementation.
-3. Search symbols/references and affected tests.
-4. Make the smallest scoped source change using guarded writes/patches.
-5. Review `show_changes`, Git status, and Git diff.
-6. Run targeted verification during development.
-7. Run the appropriate PCS headless/smoke task before completion once those commands are configured.
-8. Leave push, merge, release, and other remote repository actions outside this MCP profile.
+`--pcs-mode dev` exists because complex engineering work is exploratory. The agent may need to create a diagnostic script, run PCS, inspect output, try a Python probe, use `git blame` or `git bisect`, execute a project utility, and iterate without the operator pre-authorizing every exact command.
 
-For larger work packages, start CodexPro from a dedicated Git worktree created by the developer. The PCS profile deliberately does not mutate branches, checkout state, remotes, or the user's main working tree on its own.
+PCS dev therefore permits broad shell execution from the selected worktree.
+
+The command front door still blocks obvious high-risk operations, including:
+
+- network/remote clients such as `curl`, `wget`, SSH/SCP and similar tools;
+- Git push/pull/fetch/clone/merge/rebase/submodule operations;
+- destructive Git clean/reset-hard and checkout/restore-of-path operations;
+- GitHub/cloud/deployment CLIs such as `gh`, `aws`, `gcloud`, `az`, `kubectl`, `terraform`, and `vault`;
+- package installation/update/publish commands that normally reach external registries;
+- release/publish commands;
+- obvious parent/home/absolute path escapes;
+- obvious direct references to credential files and PCS governance/control paths;
+- privilege/process-management commands such as `sudo` and `taskkill`.
+
+These filters reduce accidental external authority. They are **not a sandbox**.
+
+### Why dev mode cannot be perfectly confined by command filtering
+
+If ChatGPT is allowed to run `python diagnostic.py`, that Python process has the operating-system permissions of the user running CodexPro. The script can use Python APIs to access files or the network without spelling `curl`, `..`, or another blocked shell token in the command line. The same is true for Node, PCS itself, native binaries, tests, and imported libraries.
+
+Therefore the guarantees are deliberately split:
+
+- **MCP filesystem operations:** constrained to the selected PCS worktree by `PathGuard`.
+- **Command front door:** blocks obvious escape/network/release/control operations.
+- **Executed program internals:** trusted local code, not OS-sandboxed.
+
+If execution of untrusted repository code is required, use a real OS boundary such as a container, VM, dedicated restricted account, or platform sandbox.
+
+## Credential and environment isolation
+
+PCS child commands do not inherit arbitrary environment variables. PCS execution also uses an isolated temporary HOME/profile rather than the developer's real HOME.
+
+The runtime disables normal Git system/global credential discovery and interactive credential prompting, resets Git credential-helper discovery, and redirects common npm/pip user configuration away from the real profile. This reduces accidental exposure of OpenAI, Git, cloud, npm, pip, SSH, and similar credentials.
+
+This is defense in depth, not a proof that arbitrary code cannot reach OS-accessible secrets. Run CodexPro as a normal non-administrator user.
+
+## Worktree model
+
+For implementation or debugging, use a dedicated Git worktree/branch:
+
+```powershell
+cd C:\path\to\PCS
+git worktree add ..\PCS-chatgpt -b feat\chatgpt-task
+codexpro-pcs start --root C:\path\to\PCS-chatgpt --pcs-mode dev
+```
+
+Do not point multiple coding agents at the same mutable checkout.
+
+The worktree is the recovery boundary for accidental source changes. Review the diff before integrating it. Push, PR creation, merge, release, signing, and deployment should remain in the normal developer/GitHub workflow outside CodexPro PCS.
+
+## Recommended task selection
+
+| Task | Mode |
+| --- | --- |
+| Architecture/API audit | `safe --no-bash --write off` |
+| Review or impact analysis | `safe --no-bash --write off` |
+| Documentation/source edit without execution | `safe --no-bash --write workspace` |
+| Straightforward fix with known tests | `safe --write workspace` |
+| Complex bug/root-cause investigation | `dev` |
+| Feature implementation needing scripts/application runs | `dev` |
+| Profiling/dynamic diagnostics | `dev` |
+| Untrusted repository or generated code | do not use `dev`; use an OS sandbox |
+
+## Recommended completion contract
+
+Before accepting a PCS change, ChatGPT should inspect the relevant code/tests/docs, make the smallest maintainable change, run targeted verification during development, run the canonical PCS headless/smoke/Go-NoGo command when applicable, inspect `show_changes`/Git status/diff, report every changed file and verification result, and leave push/merge/release outside CodexPro.
 
 ## OpenAI product boundary
 
-CodexPro must be used only through MCP/plugin capabilities that the user's current ChatGPT plan, workspace, role, and UI officially expose. The PCS profile is not a mechanism for bypassing plan limits, rate limits, approvals, safety restrictions, or product availability.
-
-If ChatGPT exposes only read/fetch MCP tools for an account, keep CodexPro read-only for that account. Do not use alternate endpoints or automation to manufacture write/execute capability that ChatGPT does not officially provide.
-
-CodexPro's local handoff/loop commands remain local terminal features. They must not be repurposed to automate ChatGPT Web, approve prompts, evade quotas, or remotely drive a local coding agent through an unsupported MCP execution path.
+CodexPro must be used only through capabilities officially exposed by the user's current ChatGPT plan/workspace/UI. The PCS profile is not a quota bypass, model proxy, browser automation mechanism, or way to manufacture unsupported write/execute capability.
