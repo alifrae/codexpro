@@ -27,7 +27,8 @@ const SAFE_ALLOWED_PREFIXES = [
   "git diff",
   "git log",
   "git show",
-  "git branch",
+  "git branch --list",
+  "git branch --show-current",
   "git rev-parse",
   "git ls-files",
   "npm test",
@@ -69,6 +70,22 @@ const SAFE_ALLOWED_PREFIXES = [
   "npx biome check"
 ];
 
+const SAFE_EXACT_COMMANDS = new Set(["git branch"]);
+
+const PCS_SAFE_ALLOWED_PREFIXES = [
+  "pwd",
+  "pytest",
+  "python -m pytest",
+  "python3 -m pytest",
+  "uv run pytest",
+  "ruff check",
+  "python -m ruff check",
+  "python3 -m ruff check",
+  "mypy",
+  "python -m mypy",
+  "python3 -m mypy"
+];
+
 const SAFE_BLOCKED_PATTERNS = [
   /(^|\s)rm\s+/,
   /(^|\s)mv\s+/,
@@ -95,10 +112,12 @@ const SAFE_BLOCKED_PATTERNS = [
   /(^|\s)(npm|pnpm|yarn)\s+publish\b/,
   /(^|\s)--no-index\b/,
   /(^|\s)--fix\b/,
-  /(^|\s)(\/|~(?:\/|\s|$))/,
-  /(^|\s)\.\.(?:\/|\s|$)/,
+  /(^|\s)(\/|~(?:[\\/]|\s|$))/,
+  /(^|\s)\.\.(?:[\\/]|\s|$)/,
+  /(^|\s)[A-Za-z]:[\\/]/,
+  /(^|\s)\\\\/,
   /\$/,
-  /(^|[\s:])(?:\.env(?:[./\s:]|$)|\.git(?:[\/\s:]|$)|node_modules(?:[\/\s:]|$)|\.ssh(?:[\/\s:]|$)|id_rsa(?:[.\s:]|$)|id_ed25519(?:[.\s:]|$)|[^\s:]*\.(?:pem|key)(?:[\s:]|$))/,
+  /(^|[\s:])(?:\.env(?:[./\\\s:]|$)|\.git(?:[\\/\s:]|$)|node_modules(?:[\\/\s:]|$)|\.ssh(?:[\\/\s:]|$)|id_rsa(?:[.\s:]|$)|id_ed25519(?:[.\s:]|$)|[^\s:]*\.(?:pem|key)(?:[\s:]|$))/,
   /(^|\s)['"]?-exec(?:['"]|\s|$)/,
   /(^|\s)['"]?-execdir(?:['"]|\s|$)/,
   /(^|\s)['"]?-delete(?:['"]|\s|$)/,
@@ -114,13 +133,57 @@ const SAFE_BLOCKED_PATTERNS = [
   /[\r\n]/
 ];
 
+// PCS dev mode deliberately permits open-ended local development commands. These
+// patterns are front-door guardrails for obvious external authority, credential
+// access, release actions, destructive Git operations, and path escape. They are
+// defense in depth only: arbitrary Python/Node/application code is not sandboxed.
+const PCS_DEV_BLOCKED_PATTERNS = [
+  /(^|\s)(?:sudo|doas|su)\s+/,
+  /(^|\s)(?:kill|pkill|killall|taskkill)\b/,
+  /(^|\s)(?:curl|wget|ssh|scp|sftp|rsync|nc|ncat|netcat|socat|ftp|telnet)\b/,
+  /(^|\s)(?:gh|glab|aws|gcloud|az|kubectl|helm|terraform|vault)\b/,
+  /(^|\s)git\s+(?:push|pull|fetch|clone|merge|rebase|submodule)\b/,
+  /(^|\s)git\s+reset\s+--hard\b/,
+  /(^|\s)git\s+clean\b/,
+  /(^|\s)git\s+(?:checkout|restore)\s+--\s/,
+  /(^|\s)(?:npm|pnpm|yarn|bun)\s+(?:install|add|update|upgrade|publish)\b/,
+  /(^|\s)(?:pip|pip3)\s+install\b/,
+  /(^|\s)python3?\s+-m\s+pip\s+install\b/,
+  /(^|\s)uv\s+(?:add|pip\s+install)\b/,
+  /(^|\s)poetry\s+add\b/,
+  /(^|\s)(?:twine\s+upload|cargo\s+publish)\b/,
+  /(^|[\s'"=])\.\.(?:[\\/]|$)/,
+  /(^|[\s'"=])~(?:[\\/]|$)/,
+  /(^|[\s'"=])[A-Za-z]:[\\/]/,
+  /(^|[\s'"=])\\\\/,
+  /(^|[\s'"=])\/[A-Za-z0-9._-]/,
+  /(^|[\s'"=\/\\])(?:\.env(?:[.\\/]|$)|\.ssh(?:[\\/]|$)|id_rsa(?:[.\s'"=]|$)|id_ed25519(?:[.\s'"=]|$)|[^\s'"=]*\.(?:pem|key)(?:[\s'"=]|$))/,
+  /(^|[\s'"=\/\\])(?:AGENTS\.md|CLAUDE\.md|GEMINI\.md)(?:[\s'"=]|$)/,
+  /(^|[\s'"=\/\\])(?:\.github[\\/]workflows|\.codex|\.agents)(?:[\\/\s'"=]|$)/,
+  /[\r\n]/
+];
+
 function compact(command: string): string {
   return command.trim().replace(/\s+/g, " ");
 }
 
-function startsWithAllowedPrefix(command: string): boolean {
+function pcsExecutionMode(env: NodeJS.ProcessEnv = process.env): "safe" | "dev" {
+  const value = env.CODEXPRO_PCS_EXECUTION_MODE?.trim().toLowerCase();
+  if (!value || value === "safe") return "safe";
+  if (value === "dev") return "dev";
+  throw new CodexProError("CODEXPRO_PCS_EXECUTION_MODE must be 'safe' or 'dev'.");
+}
+
+function hasAllowedPrefix(command: string, prefixes: readonly string[]): boolean {
+  return prefixes.some((prefix) => command === prefix || command.startsWith(`${prefix} `));
+}
+
+function startsWithAllowedPrefix(config: CodexProConfig, command: string): boolean {
   const normalized = compact(command);
-  return isAllowedPackageScript(normalized) || SAFE_ALLOWED_PREFIXES.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix} `));
+  if (config.profile === "pcs") {
+    return config.pcsAllowedCommands.includes(normalized) || hasAllowedPrefix(normalized, PCS_SAFE_ALLOWED_PREFIXES);
+  }
+  return SAFE_EXACT_COMMANDS.has(normalized) || isAllowedPackageScript(normalized) || hasAllowedPrefix(normalized, SAFE_ALLOWED_PREFIXES);
 }
 
 function isAllowedPackageScript(command: string): boolean {
@@ -129,11 +192,33 @@ function isAllowedPackageScript(command: string): boolean {
   return packageScriptPattern.test(command);
 }
 
+function assertPcsDevCommand(command: string): void {
+  const raw = command.trim();
+  const normalized = compact(command);
+  for (const pattern of PCS_DEV_BLOCKED_PATTERNS) {
+    if (pattern.test(raw) || pattern.test(normalized)) {
+      throw new CodexProError(
+        `Command is blocked by the PCS dev execution boundary: ${normalized}\n` +
+          "PCS dev allows broad local development execution but keeps obvious external/network authority, release actions, protected control paths, destructive Git operations, and path escapes blocked."
+      );
+    }
+  }
+}
+
 function assertSafeCommand(config: CodexProConfig, command: string): void {
   if (config.bashMode === "off") {
-    throw new CodexProError("bash tool is disabled. Start with CODEXPRO_BASH_MODE=safe or CODEXPRO_BASH_MODE=full to enable it.");
+    throw new CodexProError(
+      config.profile === "pcs"
+        ? "bash tool is disabled. Start the PCS profile with execution enabled to run checks or development commands."
+        : "bash tool is disabled. Start with CODEXPRO_BASH_MODE=safe or CODEXPRO_BASH_MODE=full to enable it."
+    );
   }
   if (config.bashMode === "full") return;
+
+  if (config.profile === "pcs" && pcsExecutionMode() === "dev") {
+    assertPcsDevCommand(command);
+    return;
+  }
 
   const raw = command.trim();
   const normalized = compact(command);
@@ -141,15 +226,20 @@ function assertSafeCommand(config: CodexProConfig, command: string): void {
     if (pattern.test(raw) || pattern.test(normalized)) {
       throw new CodexProError(
         `Command is blocked in CODEXPRO_BASH_MODE=safe: ${normalized}\n` +
-          "Use separate read/search/git tools, or restart with CODEXPRO_BASH_MODE=full only for trusted repos."
+          (config.profile === "pcs"
+            ? "PCS safe mode keeps generic shell authority disabled. Use read/search/git tools, a built-in check, or an operator-owned exact command in CODEXPRO_PCS_ALLOWED_COMMANDS."
+            : "Use separate read/search/git tools, or restart with CODEXPRO_BASH_MODE=full only for trusted repos.")
       );
     }
   }
-  if (!startsWithAllowedPrefix(normalized)) {
+  if (!startsWithAllowedPrefix(config, normalized)) {
     throw new CodexProError(
-      `Command is not in the safe bash allowlist: ${normalized}\n` +
-        "Allowed examples: ls, find, git status, git diff, npm test, npm run typecheck, npm run build:clients, pytest, go test, cargo test. Use read/search tools for file contents. " +
-        "Use CODEXPRO_BASH_MODE=full for trusted local automation."
+      config.profile === "pcs"
+        ? `Command is not permitted by the PCS safe execution policy: ${normalized}\n` +
+          "Built-in PCS checks are pytest, ruff check, and mypy. Add project-specific headless/smoke commands as exact strings in CODEXPRO_PCS_ALLOWED_COMMANDS, or explicitly start --pcs-mode dev for trusted exploratory development."
+        : `Command is not in the safe bash allowlist: ${normalized}\n` +
+          "Allowed examples: ls, find, git status, git diff, npm test, npm run typecheck, npm run build:clients, pytest, go test, cargo test. Use read/search tools for file contents. " +
+          "Use CODEXPRO_BASH_MODE=full for trusted local automation."
     );
   }
 }
@@ -198,6 +288,12 @@ export function resolveUsableHomeDir(env: NodeJS.ProcessEnv = process.env): stri
   );
 }
 
+function pcsIsolatedHome(): string {
+  const home = path.join(os.tmpdir(), "codexpro-pcs-home", String(process.pid));
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  return home;
+}
+
 export function makeRestrictedBashEnv(
   config: CodexProConfig,
   env: NodeJS.ProcessEnv = process.env
@@ -205,27 +301,51 @@ export function makeRestrictedBashEnv(
   if (config.inheritEnv) {
     return { ...env, NO_COLOR: "1", CI: env.CI ?? "1" };
   }
-  const home = resolveUsableHomeDir(env);
+
+  const pcsProfile = config.profile === "pcs";
+  const home = pcsProfile ? pcsIsolatedHome() : resolveUsableHomeDir(env);
+  const tmp = isUsableAbsoluteDir(env.TMPDIR) ?? isUsableAbsoluteDir(env.TEMP) ?? isUsableAbsoluteDir(env.TMP) ?? os.tmpdir();
   const restricted: NodeJS.ProcessEnv = {
     PATH: env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
     HOME: home,
     USER: env.USER ?? env.USERNAME ?? "",
     SHELL: env.SHELL ?? "/bin/bash",
-    TMPDIR: isUsableAbsoluteDir(env.TMPDIR) ?? isUsableAbsoluteDir(env.TMP) ?? os.tmpdir(),
+    TMPDIR: tmp,
+    TEMP: tmp,
+    TMP: tmp,
     TERM: "dumb",
     NO_COLOR: "1",
     CI: "1"
   };
+
+  if (pcsProfile) {
+    restricted.GIT_CONFIG_NOSYSTEM = "1";
+    restricted.GIT_CONFIG_GLOBAL = path.join(home, ".gitconfig");
+    restricted.GIT_TERMINAL_PROMPT = "0";
+    restricted.GCM_INTERACTIVE = "Never";
+    restricted.GIT_CONFIG_COUNT = "1";
+    restricted.GIT_CONFIG_KEY_0 = "credential.helper";
+    restricted.GIT_CONFIG_VALUE_0 = "";
+    restricted.NPM_CONFIG_USERCONFIG = path.join(home, ".npmrc");
+    restricted.PIP_CONFIG_FILE = os.devNull;
+    restricted.PIP_DISABLE_PIP_VERSION_CHECK = "1";
+  }
+
   if (process.platform === "win32") {
     restricted.USERPROFILE = home;
-    const appData = isUsableAbsoluteDir(env.APPDATA);
-    const localAppData = isUsableAbsoluteDir(env.LOCALAPPDATA);
-    if (appData) restricted.APPDATA = appData;
-    if (localAppData) restricted.LOCALAPPDATA = localAppData;
     if (env.USERNAME) restricted.USERNAME = env.USERNAME;
-    if (env.HOMEDRIVE && env.HOMEPATH && path.win32.isAbsolute(path.win32.join(env.HOMEDRIVE, env.HOMEPATH))) {
-      restricted.HOMEDRIVE = env.HOMEDRIVE;
-      restricted.HOMEPATH = env.HOMEPATH;
+    if (env.SystemRoot) restricted.SystemRoot = env.SystemRoot;
+    if (env.ComSpec) restricted.ComSpec = env.ComSpec;
+    if (env.PATHEXT) restricted.PATHEXT = env.PATHEXT;
+    if (!pcsProfile) {
+      const appData = isUsableAbsoluteDir(env.APPDATA);
+      const localAppData = isUsableAbsoluteDir(env.LOCALAPPDATA);
+      if (appData) restricted.APPDATA = appData;
+      if (localAppData) restricted.LOCALAPPDATA = localAppData;
+      if (env.HOMEDRIVE && env.HOMEPATH && path.win32.isAbsolute(path.win32.join(env.HOMEDRIVE, env.HOMEPATH))) {
+        restricted.HOMEDRIVE = env.HOMEDRIVE;
+        restricted.HOMEPATH = env.HOMEPATH;
+      }
     }
   }
   return restricted;

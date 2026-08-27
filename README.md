@@ -109,6 +109,26 @@ codexpro start --mode pro
 codexpro start --headless
 ```
 
+### PCS development profile
+
+This fork includes a Point Cloud Studio profile with two explicit execution levels:
+
+```powershell
+# Default: narrow verification only
+codexpro-pcs start --root C:\path\to\PCS-worktree --pcs-mode safe
+
+# Trusted exploratory debugging/implementation
+codexpro-pcs start --root C:\path\to\PCS-worktree --pcs-mode dev
+```
+
+Both modes keep one MCP repository root, force HTTP token authentication, disable Codex session-history access, strip the child-process environment, and protect agent/CI control files from normal MCP writes. Generic `--bash full` remains rejected.
+
+`safe` permits targeted pytest/Ruff/mypy checks plus exact operator-owned PCS verification commands. `dev` permits broad local development execution while blocking obvious network/remote Git/package-publish/path-escape/control-file operations at the command front door and isolating HOME/Git/package credential configuration.
+
+**PCS dev is not an OS sandbox.** Executed Python/Node/PCS code still has the permissions of the local user and can bypass command-text filtering through program APIs. Use a dedicated trusted worktree and keep push/merge/release outside CodexPro.
+
+For normal use, start with the [step-by-step PCS tutorial](docs/PCS_TUTORIAL.md). The concise profile contract is in [PCS development profile](docs/PCS_DEVELOPMENT.md), and the security review is recorded in [PCS security audit](docs/PCS_SECURITY_AUDIT.md).
+
 Opt-in tool cards:
 
 ```bash
@@ -178,6 +198,9 @@ npm run release:publish
 - [Website](https://rebel0789.github.io/codexpro/)
 - [FAQ](FAQ.md)
 - [Security](SECURITY.md)
+- [PCS tutorial](docs/PCS_TUTORIAL.md)
+- [PCS development profile](docs/PCS_DEVELOPMENT.md)
+- [PCS security audit](docs/PCS_SECURITY_AUDIT.md)
 - [Stable URL guide](DOMAIN_SETUP.md)
 - [Changelog](CHANGELOG.md)
 - [Contributors](CONTRIBUTORS.md)
